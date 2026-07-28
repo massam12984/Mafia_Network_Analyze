@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Analysis Report — Mafia Network Analyzer</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;900&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+
+  <!-- Plotly -->
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+  <style>
+    :root {
+      --black:   #07080a;
+      --dark:    #0e0f13;
+      --panel:   #13151c;
+      --border:  rgba(180, 30, 30, 0.3);
+      --red:     #c0132a;
+      --red-hot: #ff2244;
+      --gold:    #c9a84c;
+      --silver:  #8a8fa0;
+      --text:    #d8dae0;
+      --dim:     #5a5e6a;
+      --green:   #2dcc70;
+      --font-display: 'Cinzel', serif;
+      --font-body:    'Courier Prime', monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--black);
+      color: var(--text);
+      font-family: var(--font-body);
+      min-height: 100vh;
+    }
+
+    /* ── grain overlay ─────────────────────── */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      opacity: 0.45;
+    }
+
+    /* ═══════════════════════════════════════
+       TOP BAR
+    ═══════════════════════════════════════ */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2.5rem;
+      background: rgba(7,8,10,0.95);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+    }
+
+    .topbar-brand {
+      font-family: var(--font-display);
+      font-weight: 900;
+      font-size: 0.95rem;
+      letter-spacing: 0.2em;
+      color: var(--gold);
+      text-transform: uppercase;
+    }
+
+    .topbar-brand span { color: var(--red-hot); }
+
+    .topbar-right { display: flex; gap: 0.8rem; }
+
+    .btn-sm {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.5rem 1.2rem;
+      font-family: var(--font-body);
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border: 1px solid;
+      cursor: pointer;
+      background: transparent;
+      text-decoration: none;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .btn-reset {
+      color: var(--silver);
+      border-color: rgba(138,143,160,0.3);
+    }
+    .btn-reset:hover { background: rgba(138,143,160,0.1); color: #fff; }
+
+    /* ═══════════════════════════════════════
+       PAGE HEADER
+    ═══════════════════════════════════════ */
+    .page-header {
+      position: relative;
+      z-index: 10;
+      padding: 3rem 2.5rem 2rem;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(192,19,42,0.06) 0%, transparent 100%);
+    }
+
+    .page-header .eyebrow {
+      font-size: 0.72rem;
+      letter-spacing: 0.3em;
+      color: var(--red);
+      text-transform: uppercase;
+      margin-bottom: 0.5rem;
+    }
+
+    .page-header h1 {
+      font-family: var(--font-display);
+      font-size: clamp(1.6rem, 4vw, 3rem);
+      font-weight: 900;
+      color: #fff;
+      text-transform: uppercase;
+      line-height: 1.1;
+    }
+
+    .page-header h1 .highlight { color: var(--red-hot); }
+
+    /* ═══════════════════════════════════════
+       MAIN LAYOUT
+    ═══════════════════════════════════════ */
+    .main-grid {
+      position: relative;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 0;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    /* ── Left: graph ─────────────────────── */
+    .graph-panel {
+      border-right: 1px solid var(--border);
+      padding: 2rem;
+      min-height: 600px;
+    }
+
+    .panel-label {
+      font-size: 0.68rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: 1rem;
+    }
+
+    #networkGraph {
+      width: 100%;
+      height: 580px;
+      background: rgba(10,11,15,0.8);
+      border: 1px solid rgba(180,30,30,0.18);
+    }
+
+    /* ── Right: sidebar ──────────────────── */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    /* ── Boss card ───────────────────────── */
+    .boss-card {
+      padding: 2rem;
+      background: linear-gradient(135deg, rgba(192,19,42,0.12) 0%, rgba(13,15,19,0) 60%);
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .boss-card::before {
+      content: '';
+      position: absolute;
+      top: -30px; right: -30px;
+      width: 120px; height: 120px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,34,68,0.15) 0%, transparent 70%);
+      animation: bossGlow 3s ease-in-out infinite;
+    }
+
+    @keyframes bossGlow {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50%       { transform: scale(1.3); opacity: 0.5; }
+    }
+
+    .boss-label {
+      font-size: 0.68rem;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--red);
+      margin-bottom: 0.5rem;
+    }
+
+    .boss-name {
+      font-family: var(--font-display);
+      font-size: clamp(1.4rem, 3vw, 2rem);
+      font-weight: 900;
+      color: #fff;
+      text-transform: uppercase;
+      line-height: 1.1;
+      margin-bottom: 0.5rem;
+      word-break: break-all;
+    }
+
+    .boss-name-star {
+      display: inline-block;
+      color: var(--red-hot);
+      animation: starSpin 3s linear infinite;
+      margin-right: 0.3rem;
+      font-size: 1.2em;
+    }
+
+    @keyframes starSpin {
+      0%, 20%, 80%, 100% { transform: scale(1); }
+      50% { transform: scale(1.3); color: #ffcc00; }
+    }
+
+    .boss-score {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: rgba(255,34,68,0.12);
+      border: 1px solid rgba(255,34,68,0.3);
+      padding: 0.3rem 0.9rem;
+      font-size: 0.82rem;
+      color: var(--red-hot);
+      letter-spacing: 0.1em;
+      margin-bottom: 1rem;
+    }
+
+    .boss-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: rgba(201,168,76,0.1);
+      border: 1px solid rgba(201,168,76,0.3);
+      padding: 0.25rem 0.8rem;
+      font-size: 0.7rem;
+      color: var(--gold);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+
+    /* ── Stats grid ──────────────────────── */
+    .stats-card {
+      padding: 1.5rem 2rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stats-card h4 {
+      font-size: 0.68rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: 1rem;
+    }
+
+    .mini-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.8rem;
+    }
+
+    .mini-stat {
+      background: rgba(13,15,19,0.6);
+      border: 1px solid rgba(180,30,30,0.15);
+      padding: 0.8rem;
+      text-align: center;
+    }
+
+    .mini-stat-val {
+      font-family: var(--font-display);
+      font-size: 1.3rem;
+      font-weight: 900;
+      color: var(--gold);
+      display: block;
+    }
+
+    .mini-stat-lbl {
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      color: var(--dim);
+      text-transform: uppercase;
+      margin-top: 0.2rem;
+    }
+
+    /* ═══════════════════════════════════════
+       TOP 5 TABLE SECTION
+    ═══════════════════════════════════════ */
+    .table-section {
+      position: relative;
+      z-index: 10;
+      padding: 3rem 2.5rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .section-title {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      font-weight: 900;
+      color: #fff;
+      text-transform: uppercase;
+      margin-bottom: 0.3rem;
+    }
+
+    .section-sub {
+      font-size: 0.8rem;
+      color: var(--dim);
+      margin-bottom: 2rem;
+    }
+
+    .suspect-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .suspect-table thead tr {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .suspect-table th {
+      padding: 0.7rem 1rem;
+      text-align: left;
+      font-size: 0.68rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--dim);
+      font-weight: 400;
+    }
+
+    .suspect-table th:not(:first-child) { text-align: right; }
+
+    .suspect-table tbody tr {
+      border-bottom: 1px solid rgba(180,30,30,0.1);
+      transition: background 0.15s;
+    }
+
+    .suspect-table tbody tr:hover { background: rgba(192,19,42,0.05); }
+
+    .suspect-table tbody tr.boss-row {
+      background: rgba(255,34,68,0.06);
+      border-left: 3px solid var(--red-hot);
+    }
+
+    .suspect-table td {
+      padding: 1rem 1rem;
+      font-size: 0.85rem;
+      vertical-align: middle;
+    }
+
+    .suspect-table td:not(:first-child):not(:nth-child(2)) { text-align: right; color: var(--silver); }
+
+    .rank-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px; height: 28px;
+      font-family: var(--font-display);
+      font-size: 0.7rem;
+      font-weight: 900;
+    }
+
+    .rank-1 { background: var(--red-hot); color: #fff; }
+    .rank-2 { background: rgba(255,34,68,0.2); color: var(--red-hot); border: 1px solid rgba(255,34,68,0.4); }
+    .rank-3 { background: rgba(201,168,76,0.1); color: var(--gold); border: 1px solid rgba(201,168,76,0.3); }
+    .rank-4, .rank-5 { background: rgba(13,15,19,0.8); color: var(--dim); border: 1px solid rgba(90,94,106,0.3); }
+
+    .node-name {
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .boss-row .node-name { color: var(--red-hot); }
+
+    .boss-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      background: rgba(255,34,68,0.12);
+      border: 1px solid rgba(255,34,68,0.35);
+      padding: 0.15rem 0.6rem;
+      font-size: 0.65rem;
+      letter-spacing: 0.15em;
+      color: var(--red-hot);
+      text-transform: uppercase;
+      margin-left: 0.6rem;
+      vertical-align: middle;
+    }
+
+    /* ── Score bar ─────────────────────────── */
+    .score-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      justify-content: flex-end;
+    }
+
+    .score-bar {
+      width: 80px;
+      height: 4px;
+      background: rgba(255,255,255,0.06);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .score-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--red), var(--red-hot));
+      transform-origin: left;
+      animation: barGrow 1s cubic-bezier(.22,1,.36,1) both;
+    }
+
+    @keyframes barGrow {
+      from { transform: scaleX(0); }
+      to   { transform: scaleX(1); }
+    }
+
+    /* ═══════════════════════════════════════
+       CENTRALITY CHART SECTION
+    ═══════════════════════════════════════ */
+    .chart-section {
+      position: relative;
+      z-index: 10;
+      padding: 0 2.5rem 4rem;
+    }
+
+    #centralityChart {
+      width: 100%;
+      height: 340px;
+      background: rgba(10,11,15,0.6);
+      border: 1px solid rgba(180,30,30,0.18);
+    }
+
+    /* ═══════════════════════════════════════
+       FOOTER
+    ═══════════════════════════════════════ */
+    footer {
+      position: relative;
+      z-index: 10;
+      text-align: center;
+      padding: 1.5rem;
+      border-top: 1px solid rgba(180,30,30,0.15);
+      font-size: 0.72rem;
+      color: var(--dim);
+      letter-spacing: 0.1em;
+    }
+
+    footer span { color: var(--red); }
+
+    /* ═══════════════════════════════════════
+       NO-DATA GUARD
+    ═══════════════════════════════════════ */
+    .no-data {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 60vh;
+      gap: 1.5rem;
+      text-align: center;
+      padding: 2rem;
+    }
+
+    .no-data h2 {
+      font-family: var(--font-display);
+      font-size: 1.6rem;
+      color: #fff;
+      text-transform: uppercase;
+    }
+
+    .no-data p { color: var(--silver); font-size: 0.88rem; }
+
+    /* ═══════════════════════════════════════
+       RESPONSIVE
+    ═══════════════════════════════════════ */
+    @media (max-width: 900px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+      .graph-panel { border-right: none; border-bottom: 1px solid var(--border); }
+      #networkGraph { height: 420px; }
+      .topbar { padding: 1rem 1.2rem; }
+      .page-header { padding: 2rem 1.2rem 1.5rem; }
+      .table-section, .chart-section { padding-left: 1.2rem; padding-right: 1.2rem; }
+    }
+
+    @media (max-width: 600px) {
+      .suspect-table th:nth-child(4),
+      .suspect-table td:nth-child(4),
+      .suspect-table th:nth-child(5),
+      .suspect-table td:nth-child(5) { display: none; }
+    }
+
+    /* ── Entry animations ─────────────────── */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(16px);
+      animation: fadeInUp 0.7s cubic-bezier(.22,1,.36,1) forwards;
+    }
+
+    .fade-in.d1 { animation-delay: 0.1s; }
+    .fade-in.d2 { animation-delay: 0.25s; }
+    .fade-in.d3 { animation-delay: 0.4s; }
+    .fade-in.d4 { animation-delay: 0.55s; }
+
+    @keyframes fadeInUp {
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Top Bar ─────────────────────────────── -->
+<nav class="topbar">
+  <div class="topbar-brand"><span>■</span> Mafia Network</div>
+  <div class="topbar-right">
+    <a href="/" class="btn-sm btn-reset">↩ New Analysis</a>
+  </div>
+</nav>
+
+<!-- ── No-data guard ─────────────────────── -->
+<div class="no-data" id="noData" style="display:none; position:relative; z-index:10;">
+  <h2>No Data Found</h2>
+  <p>No analysis data found. Please upload a CSV file first.</p>
+  <a href="/" class="btn-sm btn-reset" style="text-decoration:none; color:var(--gold); border-color:rgba(201,168,76,0.4);">
+    ← Return to Upload
+  </a>
+</div>
+
+<!-- ── Main Content ──────────────────────── -->
+<div id="mainContent">
+
+  <!-- Page Header -->
+  <div class="page-header fade-in d1">
+    <p class="eyebrow">Intelligence Report — Network Analysis Complete</p>
+    <h1>
+      Criminal Network<br>
+      <span class="highlight" id="headerBoss">—</span>
+      <span style="color:var(--silver); font-size:0.55em;"> Identified as Boss</span>
+    </h1>
+  </div>
+
+  <!-- Main Grid: Graph + Sidebar -->
+  <div class="main-grid fade-in d2">
+
+    <!-- Graph Panel -->
+    <div class="graph-panel">
+      <div class="panel-label">▶ Interactive Network Graph — Drag to rotate · Scroll to zoom · Hover nodes for details</div>
+      <div id="networkGraph"></div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+
+      <!-- Boss Card -->
+      <div class="boss-card">
+        <div class="boss-label">🔴 Primary Suspect — Network Commander</div>
+        <div class="boss-name" id="bossName">
+          <span class="boss-name-star">★</span>
+          <span id="bossNameText">—</span>
+        </div>
+        <div>
+          <div class="boss-score" id="bossScoreEl">Score: —</div>
+        </div>
+        <br>
+        <div class="boss-badge">⚠ Highest Influence Index</div>
+      </div>
+
+      <!-- Network Stats -->
+      <div class="stats-card">
+        <h4>Network Statistics</h4>
+        <div class="mini-stats">
+          <div class="mini-stat">
+            <span class="mini-stat-val" id="statNodes">—</span>
+            <div class="mini-stat-lbl">Nodes</div>
+          </div>
+          <div class="mini-stat">
+            <span class="mini-stat-val" id="statEdges">—</span>
+            <div class="mini-stat-lbl">Edges</div>
+          </div>
+          <div class="mini-stat">
+            <span class="mini-stat-val" id="statDensity">—</span>
+            <div class="mini-stat-lbl">Density</div>
+          </div>
+          <div class="mini-stat">
+            <span class="mini-stat-val" id="statComponents">—</span>
+            <div class="mini-stat-lbl">Components</div>
+          </div>
+          <div class="mini-stat" style="grid-column: span 2;">
+            <span class="mini-stat-val" id="statAvgDeg">—</span>
+            <div class="mini-stat-lbl">Avg Degree</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Score Formula -->
+      <div class="stats-card" style="flex:1;">
+        <h4>Scoring Formula</h4>
+        <div style="font-size:0.78rem; line-height:1.9; color:var(--silver);">
+          <div style="margin-bottom:0.6rem; font-family:var(--font-display); color:#fff; font-size:0.8rem;">
+            Boss Score =
+          </div>
+          <div style="padding-left:0.5rem; border-left:2px solid var(--red);">
+            <span style="color:var(--gold);">0.4</span> × Eigenvector<br>
+            + <span style="color:var(--gold);">0.3</span> × Degree<br>
+            + <span style="color:var(--gold);">0.3</span> × Betweenness
+          </div>
+          <br>
+          <div style="color:var(--dim); font-size:0.72rem; line-height:1.7;">
+            Eigenvector is weighted highest — elite connections matter most in criminal hierarchies.
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+  </div><!-- /main-grid -->
+
+  <!-- Top 5 Table -->
+  <div class="table-section fade-in d3">
+    <div class="section-title">Top 5 Suspects</div>
+    <div class="section-sub">Ranked by composite influence score across all centrality measures</div>
+
+    <table class="suspect-table">
+      <thead>
+        <tr>
+          <th style="width:50px">Rank</th>
+          <th>Node / Suspect</th>
+          <th>Score</th>
+          <th>Degree</th>
+          <th>Betweenness</th>
+          <th>Eigenvector</th>
+          <th>Influence</th>
+        </tr>
+      </thead>
+      <tbody id="top5Body">
+        <!-- Filled by JS -->
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Centrality Comparison Chart -->
+  <div class="chart-section fade-in d4">
+    <div class="section-title">Centrality Comparison</div>
+    <div class="section-sub">Top 5 nodes across all three centrality metrics</div>
+    <div id="centralityChart"></div>
+  </div>
+
+</div><!-- /mainContent -->
+
+<footer>
+  Mafia Network Analyzer — <span>NetworkX · Flask · Plotly</span> — University Final Project
+</footer>
+
+<script>
+/* ─────────────────────────────────────────────
+   RESULTS PAGE LOGIC
+───────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+  const raw = sessionStorage.getItem('networkResult');
+
+  if (!raw) {
+    document.getElementById('noData').style.display = 'flex';
+    document.getElementById('mainContent').style.display = 'none';
+    return;
+  }
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch(e) {
+    document.getElementById('noData').style.display = 'flex';
+    document.getElementById('mainContent').style.display = 'none';
+    return;
+  }
+
+  const { boss_node, boss_score, top5, graph_json, stats } = data;
+
+  // ── Header ──────────────────────────────────────────
+  document.getElementById('headerBoss').textContent = boss_node;
+  document.getElementById('bossNameText').textContent = boss_node;
+  document.getElementById('bossScoreEl').textContent  = `Score: ${boss_score}`;
+  document.title = `${boss_node} — Mafia Network Analyzer`;
+
+  // ── Stats ────────────────────────────────────────────
+  document.getElementById('statNodes').textContent      = stats.node_count;
+  document.getElementById('statEdges').textContent      = stats.edge_count;
+  document.getElementById('statDensity').textContent    = stats.density;
+  document.getElementById('statComponents').textContent = stats.components;
+  document.getElementById('statAvgDeg').textContent     = stats.avg_degree;
+
+  // ── Plotly Network Graph ─────────────────────────────
+  const graphData = JSON.parse(graph_json);
+  const darkLayout = {
+    ...graphData.layout,
+    paper_bgcolor: 'rgba(10,11,15,0)',
+    plot_bgcolor:  'rgba(10,11,15,0)',
+    font: { color: '#d8dae0', family: 'Courier Prime, monospace' },
+    legend: {
+      font: { size: 11, color: '#8a8fa0' },
+      bgcolor: 'rgba(13,15,19,0.9)',
+      bordercolor: 'rgba(180,30,30,0.4)',
+      borderwidth: 1,
+    },
+  };
+
+  Plotly.newPlot('networkGraph', graphData.data, darkLayout, {
+    responsive: true,
+    displayModeBar: true,
+    modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+    displaylogo: false,
+  });
+
+  // ── Top 5 Table ───────────────────────────────────────
+  const tbody    = document.getElementById('top5Body');
+  const maxScore = top5[0]?.score || 1;
+
+  top5.forEach((item, idx) => {
+    const isBoss = idx === 0;
+    const pct    = (item.score / maxScore);
+    const rank   = idx + 1;
+
+    const tr = document.createElement('tr');
+    if (isBoss) tr.classList.add('boss-row');
+    tr.style.animationDelay = `${0.55 + idx * 0.08}s`;
+    tr.classList.add('fade-in');
+
+    tr.innerHTML = `
+      <td><span class="rank-badge rank-${rank}">${rank}</span></td>
+      <td>
+        <span class="node-name">${item.node}</span>
+        ${isBoss ? '<span class="boss-tag">★ Boss</span>' : ''}
+      </td>
+      <td style="text-align:right; color: ${isBoss ? 'var(--red-hot)' : 'var(--text)'}; font-weight:${isBoss?700:400}">
+        ${item.score}
+      </td>
+      <td style="text-align:right">${item.degree}</td>
+      <td style="text-align:right">${item.betweenness}</td>
+      <td style="text-align:right">${item.eigenvector}</td>
+      <td>
+        <div class="score-bar-wrap">
+          <div class="score-bar">
+            <div class="score-bar-fill" style="width:${Math.round(pct*100)}%"></div>
+          </div>
+          <span style="font-size:0.72rem; color:var(--dim); min-width:35px; text-align:right">${Math.round(pct*100)}%</span>
+        </div>
+      </td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+
+  // ── Centrality Comparison Bar Chart ───────────────────
+  const nodes       = top5.map(n => n.node);
+  const degreeVals  = top5.map(n => n.degree);
+  const btwnVals    = top5.map(n => n.betweenness);
+  const eigenVals   = top5.map(n => n.eigenvector);
+
+  const barColors   = nodes.map((_, i) => i === 0 ? 'rgba(255,34,68,0.85)' : 'rgba(58,74,107,0.7)');
+  const barColors2  = nodes.map((_, i) => i === 0 ? 'rgba(255,102,0,0.8)'  : 'rgba(45,60,90,0.7)');
+  const barColors3  = nodes.map((_, i) => i === 0 ? 'rgba(201,168,76,0.9)' : 'rgba(40,55,85,0.7)');
+
+  const chartData = [
+    {
+      type: 'bar', name: 'Degree Centrality',
+      x: nodes, y: degreeVals,
+      marker: { color: barColors },
+      hovertemplate: '<b>%{x}</b><br>Degree: %{y:.4f}<extra></extra>',
+    },
+    {
+      type: 'bar', name: 'Betweenness Centrality',
+      x: nodes, y: btwnVals,
+      marker: { color: barColors2 },
+      hovertemplate: '<b>%{x}</b><br>Betweenness: %{y:.4f}<extra></extra>',
+    },
+    {
+      type: 'bar', name: 'Eigenvector Centrality',
+      x: nodes, y: eigenVals,
+      marker: { color: barColors3 },
+      hovertemplate: '<b>%{x}</b><br>Eigenvector: %{y:.4f}<extra></extra>',
+    },
+  ];
+
+  const chartLayout = {
+    barmode: 'group',
+    paper_bgcolor: 'rgba(10,11,15,0)',
+    plot_bgcolor:  'rgba(10,11,15,0)',
+    font: { color: '#8a8fa0', family: 'Courier Prime, monospace', size: 11 },
+    xaxis: {
+      gridcolor: 'rgba(180,30,30,0.1)',
+      tickfont: { color: '#8a8fa0', size: 10 },
+      tickangle: -20,
+    },
+    yaxis: {
+      gridcolor: 'rgba(180,30,30,0.1)',
+      tickfont: { color: '#8a8fa0', size: 10 },
+      title: { text: 'Score', font: { color: '#5a5e6a', size: 10 } },
+    },
+    legend: {
+      font: { size: 11, color: '#8a8fa0' },
+      bgcolor: 'rgba(13,15,19,0.9)',
+      bordercolor: 'rgba(180,30,30,0.3)',
+      borderwidth: 1,
+    },
+    margin: { l: 50, r: 20, t: 20, b: 80 },
+  };
+
+  Plotly.newPlot('centralityChart', chartData, chartLayout, {
+    responsive: true,
+    displayModeBar: false,
+  });
+});
+</script>
+</body>
+</html>
