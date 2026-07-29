@@ -23,7 +23,10 @@ from pymongo.errors import DuplicateKeyError
 # App Configuration
 # ─────────────────────────────────────────────
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'mafia-super-secret-2024')
+app.secret_key = os.environ.get('SECRET_KEY')
+
+if not app.secret_key:
+    raise RuntimeError("SECRET_KEY environment variable is required")
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 
@@ -314,8 +317,15 @@ def analyze_network(filepath):
 # Run
 # ─────────────────────────────────────────────
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', '5000'))
+
     print("=" * 60)
-    print("  🔫  Mafia Network Analyzer  🔫")
-    print("  Running at: http://127.0.0.1:5000")
+    print("Mafia Network Analyzer")
+    print(f"Running on port {port}")
     print("=" * 60)
-    app.run(debug=True, port=5000)
+
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=False
+    )
