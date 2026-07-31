@@ -6,7 +6,6 @@ pipeline {
         disableConcurrentBuilds()
         timestamps()
     }
-
     environment {
         IMAGE_NAME      = 'mafia-network-analyzer'
         APP_CONTAINER   = 'mafia-app'
