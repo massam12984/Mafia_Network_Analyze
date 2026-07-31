@@ -215,95 +215,138 @@ pipeline {
             }
         }
 
-        stage('9. OWASP ZAP DAST') {
-            steps {
-                echo 'Running OWASP ZAP against the deployed application...'
+       stage('9. OWASP ZAP DAST') {
+    steps {
+        echo 'Running OWASP ZAP against the deployed application...'
 
-                sh '''
-                    set -eu
+        sh '''
+            set -u
 
-                    ZAP_CONTAINER="zap-scan-$BUILD_NUMBER"
-                    TARGET_URL="http://$APP_CONTAINER:5000/login"
+            ZAP_CONTAINER="zap-scan-$BUILD_NUMBER"
+            ZAP_VOLUME="zap-work-$BUILD_NUMBER"
+            TARGET_URL="http://$APP_CONTAINER:5000/login"
 
-                    echo "Removing reports from an earlier build..."
+            echo "Preparing OWASP ZAP scan..."
 
-                    rm -rf "$ZAP_REPORT_DIR"
-                    mkdir -p "$ZAP_REPORT_DIR"
+            rm -rf "$ZAP_REPORT_DIR"
+            mkdir -p "$ZAP_REPORT_DIR"
 
-                    echo "Removing an old ZAP container if it exists..."
+            # Remove resources from an earlier failed build.
+            docker rm -f "$ZAP_CONTAINER" \
+                >/dev/null 2>&1 || true
 
-                    docker rm -f "$ZAP_CONTAINER" \
-                        >/dev/null 2>&1 || true
+            docker volume rm "$ZAP_VOLUME" \
+                >/dev/null 2>&1 || true
 
-                    # Remove the temporary ZAP container when this shell exits.
-                    trap 'docker rm -f "$ZAP_CONTAINER" >/dev/null 2>&1 || true' EXIT
+            cleanup_zap() {
+                echo "Cleaning temporary ZAP resources..."
 
-                    echo "Pulling the official OWASP ZAP image..."
+                docker rm -f "$ZAP_CONTAINER" \
+                    >/dev/null 2>&1 || true
 
-                    docker pull "$ZAP_IMAGE"
-
-                    echo "Testing access from ZAP to the application..."
-
-                    docker run --rm \
-                        --network "$APP_NETWORK" \
-                        "$ZAP_IMAGE" \
-                        curl -fsS "$TARGET_URL" \
-                        >/dev/null
-
-                    echo "ZAP can access the deployed application."
-                    echo "Starting OWASP ZAP baseline security scan..."
-                    echo "Target URL: $TARGET_URL"
-
-                    set +e
-
-                    docker run \
-                        --name "$ZAP_CONTAINER" \
-                        --network "$APP_NETWORK" \
-                        "$ZAP_IMAGE" \
-                        zap-baseline.py \
-                        -t "$TARGET_URL" \
-                        -m 1 \
-                        -T 10 \
-                        -r zap-report.html \
-                        -J zap-report.json \
-                        -x zap-report.xml \
-                        -I
-
-                    ZAP_EXIT_CODE=$?
-
-                    set -e
-
-                    echo "$ZAP_EXIT_CODE" \
-                        > "$ZAP_REPORT_DIR/zap-exit-code.txt"
-
-                    echo "Copying the ZAP reports into the Jenkins workspace..."
-
-                    docker cp \
-                        "$ZAP_CONTAINER:/zap/wrk/zap-report.html" \
-                        "$ZAP_REPORT_DIR/zap-report.html"
-
-                    docker cp \
-                        "$ZAP_CONTAINER:/zap/wrk/zap-report.json" \
-                        "$ZAP_REPORT_DIR/zap-report.json"
-
-                    docker cp \
-                        "$ZAP_CONTAINER:/zap/wrk/zap-report.xml" \
-                        "$ZAP_REPORT_DIR/zap-report.xml"
-
-                    echo ""
-                    echo "Generated OWASP ZAP reports:"
-
-                    ls -lh "$ZAP_REPORT_DIR"
-
-                    echo ""
-                    echo "OWASP ZAP exit code: $ZAP_EXIT_CODE"
-
-                    # Do not fail here because the next stage must first
-                    # archive the generated security reports.
-                    exit 0
-                '''
+                docker volume rm "$ZAP_VOLUME" \
+                    >/dev/null 2>&1 || true
             }
-        }
+
+            trap cleanup_zap EXIT
+
+            echo "Pulling the official OWASP ZAP image..."
+
+            docker pull "$ZAP_IMAGE"
+
+            echo "Testing whether ZAP can access the application..."
+
+            docker run --rm \
+                --network "$APP_NETWORK" \
+                "$ZAP_IMAGE" \
+                curl -fsS "$TARGET_URL" \
+                >/dev/null
+
+            echo "ZAP can access the deployed application."
+
+            echo "Creating a temporary volume for ZAP reports..."
+
+            docker volume create "$ZAP_VOLUME" \
+                >/dev/null
+
+            # Give the ZAP user permission to create reports.
+            docker run --rm \
+                --user root \
+                --volume "$ZAP_VOLUME:/zap/wrk" \
+                --entrypoint sh \
+                "$ZAP_IMAGE" \
+                -c 'chmod 777 /zap/wrk'
+
+            echo "Starting OWASP ZAP baseline security scan..."
+            echo "Target URL: $TARGET_URL"
+
+            set +e
+
+            docker run \
+                --name "$ZAP_CONTAINER" \
+                --network "$APP_NETWORK" \
+                --volume "$ZAP_VOLUME:/zap/wrk:rw" \
+                "$ZAP_IMAGE" \
+                zap-baseline.py \
+                -t "$TARGET_URL" \
+                -m 1 \
+                -T 10 \
+                -r zap-report.html \
+                -J zap-report.json \
+                -x zap-report.xml \
+                -I
+
+            ZAP_EXIT_CODE=$?
+
+            set -e
+
+            echo "$ZAP_EXIT_CODE" \
+                > "$ZAP_REPORT_DIR/zap-exit-code.txt"
+
+            echo "ZAP exit code: $ZAP_EXIT_CODE"
+            echo "Copying reports into the Jenkins workspace..."
+
+            COPY_FAILED=0
+
+            for REPORT_FILE in \
+                zap-report.html \
+                zap-report.json \
+                zap-report.xml
+            do
+                if docker cp \
+                    "$ZAP_CONTAINER:/zap/wrk/$REPORT_FILE" \
+                    "$ZAP_REPORT_DIR/$REPORT_FILE"
+                then
+                    echo "Copied: $REPORT_FILE"
+                else
+                    echo "Failed to copy: $REPORT_FILE"
+                    COPY_FAILED=1
+                fi
+            done
+
+            echo ""
+            echo "Generated OWASP ZAP files:"
+
+            ls -lh "$ZAP_REPORT_DIR"
+
+            if [ "$COPY_FAILED" -ne 0 ]; then
+                echo "One or more ZAP reports were not generated."
+                exit 1
+            fi
+
+            if [ ! -s "$ZAP_REPORT_DIR/zap-report.html" ]; then
+                echo "The HTML security report is missing or empty."
+                exit 1
+            fi
+
+            echo "OWASP ZAP scan and report generation completed."
+
+            # Stage 10 will evaluate the recorded exit code
+            # after archiving the reports.
+            exit 0
+        '''
+    }
+}
 
         stage('10. Archive ZAP Reports') {
             steps {
