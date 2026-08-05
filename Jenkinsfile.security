@@ -1,0 +1,337 @@
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds()
+        timestamps()
+
+        buildDiscarder(
+            logRotator(
+                numToKeepStr: '10',
+                artifactNumToKeepStr: '5'
+            )
+        )
+    }
+
+    environment {
+        IMAGE_NAME = 'mafia-security-scan'
+
+        REPORT_DIR = 'security-reports'
+
+        TRIVY_IMAGE = 'aquasec/trivy:latest'
+        GRYPE_IMAGE = 'anchore/grype:latest'
+
+        TRIVY_CACHE_VOLUME = 'mafia-trivy-cache'
+        GRYPE_CACHE_VOLUME = 'mafia-grype-cache'
+    }
+
+    stages {
+
+        stage('1. Checkout') {
+            steps {
+                echo 'Downloading the project from GitHub...'
+
+                checkout scm
+
+                sh '''
+                    set -eu
+
+                    echo "Repository files:"
+                    ls -la
+
+                    echo "Checking required project files..."
+
+                    test -f app.py
+                    test -f requirements.txt
+                    test -f Dockerfile
+                    test -f sonar-project.properties
+                    test -f Jenkinsfile.security
+
+                    echo "All required files are available."
+                '''
+            }
+        }
+
+        stage('2. Validate Python') {
+            steps {
+                echo 'Checking the Python application syntax...'
+
+                sh '''
+                    set -eu
+
+                    python3 --version
+                    python3 -m py_compile app.py
+
+                    echo "Python syntax is valid."
+                '''
+            }
+        }
+
+        stage('3. Verify Security Scanners') {
+            steps {
+                echo 'Checking Trivy and Grype Docker images...'
+
+                sh '''
+                    set -eu
+
+                    if ! docker image inspect "$TRIVY_IMAGE" \
+                        >/dev/null 2>&1; then
+
+                        echo "Trivy image is missing."
+                        echo "Run: docker pull $TRIVY_IMAGE"
+                        exit 1
+                    fi
+
+                    if ! docker image inspect "$GRYPE_IMAGE" \
+                        >/dev/null 2>&1; then
+
+                        echo "Grype image is missing."
+                        echo "Run: docker pull $GRYPE_IMAGE"
+                        exit 1
+                    fi
+
+                    echo "Trivy version:"
+                    docker run --rm "$TRIVY_IMAGE" --version
+
+                    echo ""
+                    echo "Grype version:"
+                    docker run --rm "$GRYPE_IMAGE" version
+
+                    echo ""
+                    echo "Both scanner images are available."
+                '''
+            }
+        }
+
+        stage('4. SonarQube Analysis') {
+            steps {
+                echo 'Sending the source code to SonarQube...'
+
+                script {
+                    def scannerHome = tool 'SonarScanner'
+
+                    withSonarQubeEnv('SonarQube') {
+                        sh "${scannerHome}/bin/sonar-scanner"
+                    }
+                }
+            }
+        }
+
+        stage('5. Quality Gate') {
+            steps {
+                echo 'Waiting for the SonarQube Quality Gate result...'
+
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('6. Build Docker Image') {
+            steps {
+                echo 'Building the application Docker image...'
+
+                sh '''
+                    set -eu
+
+                    docker build --pull \
+                        -t "$IMAGE_NAME:$BUILD_NUMBER" \
+                        -t "$IMAGE_NAME:latest" \
+                        .
+
+                    docker image inspect \
+                        "$IMAGE_NAME:$BUILD_NUMBER" \
+                        >/dev/null
+
+                    echo "Docker image created successfully."
+                    echo "Image: $IMAGE_NAME:$BUILD_NUMBER"
+                '''
+            }
+        }
+
+        stage('7. Trivy Vulnerability Scan') {
+            steps {
+                echo 'Scanning the Docker image with Trivy...'
+
+                timeout(time: 30, unit: 'MINUTES') {
+                    sh '''
+                        set -eu
+
+                        rm -rf "$REPORT_DIR"
+                        mkdir -p "$REPORT_DIR"
+
+                        docker volume inspect "$TRIVY_CACHE_VOLUME" \
+                            >/dev/null 2>&1 \
+                            || docker volume create \
+                                "$TRIVY_CACHE_VOLUME" \
+                                >/dev/null
+
+                        echo "Generating Trivy text report..."
+
+                        docker run --rm \
+                            --user 0:0 \
+                            -v /var/run/docker.sock:/var/run/docker.sock \
+                            -v "$TRIVY_CACHE_VOLUME:/root/.cache/" \
+                            "$TRIVY_IMAGE" \
+                            image \
+                            --scanners vuln \
+                            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+                            --no-progress \
+                            --format table \
+                            "$IMAGE_NAME:$BUILD_NUMBER" \
+                            > "$REPORT_DIR/trivy-report.txt"
+
+                        echo "Generating Trivy JSON report..."
+
+                        docker run --rm \
+                            --user 0:0 \
+                            -v /var/run/docker.sock:/var/run/docker.sock \
+                            -v "$TRIVY_CACHE_VOLUME:/root/.cache/" \
+                            "$TRIVY_IMAGE" \
+                            image \
+                            --scanners vuln \
+                            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+                            --no-progress \
+                            --format json \
+                            "$IMAGE_NAME:$BUILD_NUMBER" \
+                            > "$REPORT_DIR/trivy-report.json"
+
+                        test -s "$REPORT_DIR/trivy-report.txt"
+                        test -s "$REPORT_DIR/trivy-report.json"
+
+                        echo ""
+                        echo "Trivy scan completed successfully."
+                        echo "Report preview:"
+                        head -n 80 "$REPORT_DIR/trivy-report.txt"
+                    '''
+                }
+            }
+        }
+
+        stage('8. Grype Vulnerability Scan') {
+            steps {
+                echo 'Scanning the Docker image with Grype...'
+
+                timeout(time: 30, unit: 'MINUTES') {
+                    sh '''
+                        set -eu
+
+                        docker volume inspect "$GRYPE_CACHE_VOLUME" \
+                            >/dev/null 2>&1 \
+                            || docker volume create \
+                                "$GRYPE_CACHE_VOLUME" \
+                                >/dev/null
+
+                        echo "Generating Grype text report..."
+
+                        docker run --rm \
+                            --user 0:0 \
+                            -v /var/run/docker.sock:/var/run/docker.sock \
+                            -v "$GRYPE_CACHE_VOLUME:/root/.cache/grype" \
+                            "$GRYPE_IMAGE" \
+                            "docker:$IMAGE_NAME:$BUILD_NUMBER" \
+                            --by-cve \
+                            -o table \
+                            > "$REPORT_DIR/grype-report.txt"
+
+                        echo "Generating Grype JSON report..."
+
+                        docker run --rm \
+                            --user 0:0 \
+                            -v /var/run/docker.sock:/var/run/docker.sock \
+                            -v "$GRYPE_CACHE_VOLUME:/root/.cache/grype" \
+                            "$GRYPE_IMAGE" \
+                            "docker:$IMAGE_NAME:$BUILD_NUMBER" \
+                            --by-cve \
+                            -o json \
+                            > "$REPORT_DIR/grype-report.json"
+
+                        test -s "$REPORT_DIR/grype-report.txt"
+                        test -s "$REPORT_DIR/grype-report.json"
+
+                        echo ""
+                        echo "Grype scan completed successfully."
+                        echo "Report preview:"
+                        head -n 80 "$REPORT_DIR/grype-report.txt"
+                    '''
+                }
+            }
+        }
+
+        stage('9. Archive Security Reports') {
+            steps {
+                echo 'Saving Trivy and Grype reports in Jenkins...'
+
+                archiveArtifacts(
+                    artifacts: 'security-reports/*',
+                    fingerprint: true,
+                    allowEmptyArchive: false
+                )
+            }
+        }
+
+        stage('10. Security Summary') {
+            steps {
+                sh '''
+                    set -eu
+
+                    echo "========================================"
+                    echo "Docker image scanned"
+                    echo "========================================"
+
+                    docker images "$IMAGE_NAME"
+
+                    echo ""
+                    echo "========================================"
+                    echo "Scanner images"
+                    echo "========================================"
+
+                    docker images \
+                        "$TRIVY_IMAGE" \
+                        "$GRYPE_IMAGE"
+
+                    echo ""
+                    echo "========================================"
+                    echo "Generated security reports"
+                    echo "========================================"
+
+                    ls -lh "$REPORT_DIR"
+
+                    echo ""
+                    echo "Trivy report:"
+                    echo "$REPORT_DIR/trivy-report.txt"
+
+                    echo "Grype report:"
+                    echo "$REPORT_DIR/grype-report.txt"
+
+                    echo ""
+                    echo "Open the Jenkins build artifacts"
+                    echo "to view or download all reports."
+                '''
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo 'Security Pipeline completed successfully.'
+            echo 'SonarQube Quality Gate passed.'
+            echo 'Docker image was built.'
+            echo 'Trivy scan completed.'
+            echo 'Grype scan completed.'
+            echo 'Security reports were archived.'
+        }
+
+        failure {
+            echo 'Security Pipeline failed.'
+            echo 'Open the first red stage and inspect its console output.'
+        }
+
+        always {
+            echo 'Cleaning the Jenkins workspace...'
+            cleanWs()
+        }
+    }
+}
