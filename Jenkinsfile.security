@@ -48,7 +48,7 @@ pipeline {
                     test -f sonar-project.properties
                     test -f Jenkinsfile.security
 
-                    echo "All required files are available."
+                    echo "All required project files are available."
                 '''
             }
         }
@@ -79,7 +79,8 @@ pipeline {
                         >/dev/null 2>&1; then
 
                         echo "Trivy image is missing."
-                        echo "Run: docker pull $TRIVY_IMAGE"
+                        echo "Run this command on Ubuntu:"
+                        echo "docker pull $TRIVY_IMAGE"
                         exit 1
                     fi
 
@@ -87,16 +88,21 @@ pipeline {
                         >/dev/null 2>&1; then
 
                         echo "Grype image is missing."
-                        echo "Run: docker pull $GRYPE_IMAGE"
+                        echo "Run this command on Ubuntu:"
+                        echo "docker pull $GRYPE_IMAGE"
                         exit 1
                     fi
 
                     echo "Trivy version:"
-                    docker run --rm "$TRIVY_IMAGE" --version
+                    docker run --rm \
+                        "$TRIVY_IMAGE" \
+                        --version
 
                     echo ""
                     echo "Grype version:"
-                    docker run --rm "$GRYPE_IMAGE" version
+                    docker run --rm \
+                        "$GRYPE_IMAGE" \
+                        version
 
                     echo ""
                     echo "Both scanner images are available."
@@ -202,8 +208,10 @@ pipeline {
 
                         echo ""
                         echo "Trivy scan completed successfully."
-                        echo "Report preview:"
-                        head -n 80 "$REPORT_DIR/trivy-report.txt"
+                        echo "Trivy report preview:"
+
+                        head -n 80 \
+                            "$REPORT_DIR/trivy-report.txt"
                     '''
                 }
             }
@@ -252,8 +260,10 @@ pipeline {
 
                         echo ""
                         echo "Grype scan completed successfully."
-                        echo "Report preview:"
-                        head -n 80 "$REPORT_DIR/grype-report.txt"
+                        echo "Grype report preview:"
+
+                        head -n 80 \
+                            "$REPORT_DIR/grype-report.txt"
                     '''
                 }
             }
@@ -284,12 +294,17 @@ pipeline {
 
                     echo ""
                     echo "========================================"
-                    echo "Scanner images"
+                    echo "Trivy scanner image"
                     echo "========================================"
 
-                    docker images \
-                        "$TRIVY_IMAGE" \
-                        "$GRYPE_IMAGE"
+                    docker images "$TRIVY_IMAGE"
+
+                    echo ""
+                    echo "========================================"
+                    echo "Grype scanner image"
+                    echo "========================================"
+
+                    docker images "$GRYPE_IMAGE"
 
                     echo ""
                     echo "========================================"
@@ -299,15 +314,28 @@ pipeline {
                     ls -lh "$REPORT_DIR"
 
                     echo ""
-                    echo "Trivy report:"
+                    echo "Trivy reports:"
                     echo "$REPORT_DIR/trivy-report.txt"
-
-                    echo "Grype report:"
-                    echo "$REPORT_DIR/grype-report.txt"
+                    echo "$REPORT_DIR/trivy-report.json"
 
                     echo ""
-                    echo "Open the Jenkins build artifacts"
-                    echo "to view or download all reports."
+                    echo "Grype reports:"
+                    echo "$REPORT_DIR/grype-report.txt"
+                    echo "$REPORT_DIR/grype-report.json"
+
+                    echo ""
+                    echo "========================================"
+                    echo "Final result"
+                    echo "========================================"
+
+                    echo "SonarQube analysis completed."
+                    echo "Docker image build completed."
+                    echo "Trivy vulnerability scan completed."
+                    echo "Grype vulnerability scan completed."
+                    echo "Security reports were archived."
+                    echo ""
+                    echo "Open Jenkins build artifacts"
+                    echo "to view or download the reports."
                 '''
             }
         }
@@ -318,15 +346,15 @@ pipeline {
         success {
             echo 'Security Pipeline completed successfully.'
             echo 'SonarQube Quality Gate passed.'
-            echo 'Docker image was built.'
-            echo 'Trivy scan completed.'
-            echo 'Grype scan completed.'
-            echo 'Security reports were archived.'
+            echo 'Docker image was built successfully.'
+            echo 'Trivy scan completed successfully.'
+            echo 'Grype scan completed successfully.'
+            echo 'Security reports were archived successfully.'
         }
 
         failure {
             echo 'Security Pipeline failed.'
-            echo 'Open the first red stage and inspect its console output.'
+            echo 'Open the first red stage and inspect its Console Output.'
         }
 
         always {
