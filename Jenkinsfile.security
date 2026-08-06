@@ -175,67 +175,76 @@ pipeline {
             }
         }
 
-        stage('7. Trivy Vulnerability Scan') {
-            steps {
-                echo 'Scanning Docker image using Trivy...'
+      stage('7. Trivy Vulnerability Scan') {
+    steps {
+        echo 'Scanning Docker image using Trivy...'
 
-                timeout(time: 30, unit: 'MINUTES') {
-                    sh '''
-                        set -eu
+        timeout(time: 30, unit: 'MINUTES') {
+            sh '''
+                set -eu
 
-                        rm -rf "$REPORT_DIR"
-                        mkdir -p "$REPORT_DIR"
+                rm -rf "$REPORT_DIR"
+                mkdir -p "$REPORT_DIR"
 
-                        docker volume inspect \
-                            "$TRIVY_CACHE_VOLUME" \
-                            >/dev/null 2>&1 \
-                            || docker volume create \
-                                "$TRIVY_CACHE_VOLUME" \
-                                >/dev/null
+                docker volume inspect "$TRIVY_CACHE_VOLUME" \
+                    >/dev/null 2>&1 \
+                    || docker volume create "$TRIVY_CACHE_VOLUME" \
+                    >/dev/null
 
-                        echo "Generating Trivy text report..."
+                echo "Updating Trivy vulnerability database..."
 
-                        docker run --rm \
-                            --user 0:0 \
-                            -v /var/run/docker.sock:/var/run/docker.sock \
-                            -v "$TRIVY_CACHE_VOLUME:/root/.cache/" \
-                            "$TRIVY_IMAGE" \
-                            image \
-                            --scanners vuln \
-                            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
-                            --no-progress \
-                            --format table \
-                            "$IMAGE_NAME:$BUILD_NUMBER" \
-                            > "$REPORT_DIR/trivy-report.txt"
+                docker run --rm \
+                    --user 0:0 \
+                    -v "$TRIVY_CACHE_VOLUME:/root/.cache/" \
+                    "$TRIVY_IMAGE" \
+                    image \
+                    --db-repository aquasec/trivy-db:2 \
+                    --download-db-only
 
-                        echo "Generating Trivy JSON report..."
+                echo "Generating Trivy text report..."
 
-                        docker run --rm \
-                            --user 0:0 \
-                            -v /var/run/docker.sock:/var/run/docker.sock \
-                            -v "$TRIVY_CACHE_VOLUME:/root/.cache/" \
-                            "$TRIVY_IMAGE" \
-                            image \
-                            --scanners vuln \
-                            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
-                            --no-progress \
-                            --format json \
-                            "$IMAGE_NAME:$BUILD_NUMBER" \
-                            > "$REPORT_DIR/trivy-report.json"
+                docker run --rm \
+                    --user 0:0 \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v "$TRIVY_CACHE_VOLUME:/root/.cache/" \
+                    "$TRIVY_IMAGE" \
+                    image \
+                    --skip-db-update \
+                    --scanners vuln \
+                    --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+                    --no-progress \
+                    --format table \
+                    "$IMAGE_NAME:$BUILD_NUMBER" \
+                    > "$REPORT_DIR/trivy-report.txt"
 
-                        test -s "$REPORT_DIR/trivy-report.txt"
-                        test -s "$REPORT_DIR/trivy-report.json"
+                echo "Generating Trivy JSON report..."
 
-                        echo ""
-                        echo "Trivy scan completed."
-                        echo "Trivy report preview:"
+                docker run --rm \
+                    --user 0:0 \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v "$TRIVY_CACHE_VOLUME:/root/.cache/" \
+                    "$TRIVY_IMAGE" \
+                    image \
+                    --skip-db-update \
+                    --scanners vuln \
+                    --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+                    --no-progress \
+                    --format json \
+                    "$IMAGE_NAME:$BUILD_NUMBER" \
+                    > "$REPORT_DIR/trivy-report.json"
 
-                        head -n 50 \
-                            "$REPORT_DIR/trivy-report.txt"
-                    '''
-                }
-            }
+                test -s "$REPORT_DIR/trivy-report.txt"
+                test -s "$REPORT_DIR/trivy-report.json"
+
+                echo ""
+                echo "Trivy scan completed successfully."
+                echo "Trivy report preview:"
+
+                head -n 50 "$REPORT_DIR/trivy-report.txt"
+            '''
         }
+    }
+}
 
         stage('8. Grype Plugin Scan') {
             steps {
